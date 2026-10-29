@@ -33,4 +33,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Zwischendateien entfernen, damit nur die fertige .exe in dist\ übrig bleibt
+rmdir /s /q "%~dp0build"
+
 echo Fertig: dist\AKICHEAST3D\AKICHEAST3D.exe
