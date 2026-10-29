@@ -42,8 +42,10 @@ Python 3.13 ist nicht im PATH. Alles läuft über die virtuelle Umgebung `.venv`
 
 - Einrichten: `<Python313>\python.exe -m venv .venv`, dann `.venv\Scripts\python.exe -m pip install -r requirements-dev.txt` und `.venv\Scripts\python.exe -m pip install -e .`
 - Tests: `.venv\Scripts\python.exe -m pytest -q`
-- Programm starten: `.venv\Scripts\python.exe -m akicheast3d.main`
-- .exe bauen: `build.bat` (führt zuerst die Tests aus, Ergebnis in `dist\AKICHEAST3D\AKICHEAST3D.exe`)
+- Programm starten: `.venv\Scripts\python.exe -m akicheast3d.main` (optional mit einem Ordner als Argument, der direkt geöffnet wird)
+- .exe bauen: `build.bat` (Tests, Build, danach Selbsttest der .exe mit einem komprimierten Phantom; Ergebnis in `dist\AKICHEAST3D\AKICHEAST3D.exe`)
+- Selbsttest von Hand: `AKICHEAST3D.exe --selbsttest <ordner> <bild.png>` lädt die empfohlene Serie ohne Rückfragen, speichert einen Screenshot, Protokoll in `<bild>.txt`, Rückgabewert 0 heisst bestanden
+- Tests in `tests/gui_checks/` laufen als eigener Prozess mit echtem Fenster, weil VTK OpenGL braucht. Beim Testlauf blitzen deshalb kurz Fenster auf.
 - Testdaten laden: `.venv\Scripts\python.exe scripts\testdaten_laden.py` (`--nur-anzeigen` zeigt nur die Auswahl)
 - Phantome als DICOM schreiben, zum Beispiel für 3D Slicer: `.venv\Scripts\python.exe -m tests.phantoms` (nach `testdata\phantome\`)
 
