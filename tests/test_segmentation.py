@@ -4,7 +4,15 @@ import numpy as np
 import pytest
 
 from akicheast3d.core import segmenters
-from akicheast3d.segmentation.threshold import AIRWAYS, BODY, BONE, LUNG, ThresholdSegmenter
+from akicheast3d.segmentation.threshold import (
+    AIRWAYS,
+    BODY,
+    BONE,
+    LUNG,
+    VESSELS,
+    ThresholdSegmenter,
+    _fill_slices,
+)
 from tests.phantoms.thorax import thorax_phantom
 
 
@@ -29,9 +37,9 @@ def test_is_registered():
     assert ThresholdSegmenter.name in segmenters
 
 
-def test_returns_four_structures_in_order(phantom):
+def test_returns_five_structures_in_order(phantom):
     structures = ThresholdSegmenter().segment(phantom.volume)
-    assert [s.name for s in structures] == [LUNG, AIRWAYS, BONE, BODY]
+    assert [s.name for s in structures] == [LUNG, VESSELS, AIRWAYS, BONE, BODY]
     for structure in structures:
         assert structure.mask.shape == phantom.volume.hu.shape
         assert structure.visible
@@ -47,6 +55,32 @@ def test_lung(phantom, result):
     assert dice(lung, phantom.lung) > 0.95
     assert not (lung & phantom.stomach).any()
     assert np.count_nonzero(lung & phantom.airways) < 0.05 * np.count_nonzero(phantom.airways)
+
+
+def test_lung_excludes_diaphragm_dome(phantom, result):
+    # Nur die oberste Spitze der Kuppe ist so klein wie ein Gefäss und wird aufgefüllt
+    assert np.count_nonzero(result[LUNG].mask & phantom.dome) < 0.08 * np.count_nonzero(phantom.dome)
+
+
+def test_vessels(phantom, result):
+    vessels = result[VESSELS].mask
+    assert dice(vessels, phantom.vessels) > 0.75
+    assert np.count_nonzero(vessels & phantom.vessels) > 0.95 * np.count_nonzero(phantom.vessels)
+    assert not (vessels & phantom.airways).any()
+    assert not (vessels & phantom.bone).any()
+    assert np.count_nonzero(vessels & phantom.dome) < 0.05 * np.count_nonzero(phantom.dome)
+    # Gefässe liegen innerhalb der Lunge, damit sie in der Glas-Lunge sichtbar sind
+    assert np.count_nonzero(vessels & ~result[LUNG].mask) == 0
+
+
+def test_fill_slices_limits_hole_size():
+    mask = np.ones((1, 30, 30), dtype=bool)
+    mask[0, 3:6, 3:6] = False  # kleines Loch, 9 Pixel
+    mask[0, 10:25, 10:25] = False  # grosses Loch, 225 Pixel
+    assert _fill_slices(mask).all()
+    limited = _fill_slices(mask, max_hole=50)
+    assert limited[0, 3:6, 3:6].all()
+    assert not limited[0, 10:25, 10:25].any()
 
 
 def test_airways(phantom, result):
@@ -98,6 +132,7 @@ def test_lidc_volumes_are_plausible(lidc_dir):
         ml = volume.voxel_volume_mm3 / 1000
         result = {s.name: s.voxel_count * ml for s in ThresholdSegmenter().segment(volume)}
         assert 2000 < result[LUNG] < 8000, directory.name
+        assert 20 < result[VESSELS] < 400, directory.name
         assert 10 < result[AIRWAYS] < 300, directory.name
         assert result[BONE] > 300, directory.name
         assert result[BODY] > result[LUNG], directory.name

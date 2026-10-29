@@ -37,8 +37,8 @@ def test_start_state(result):
 
 
 def test_series_is_shown_everywhere(result):
-    assert result["structures"] == ["Lunge", "Atemwege", "Knochen", "Körperumriss"]
-    assert result["panel_rows"] == 4
+    assert result["structures"] == ["Lunge", "Lungengefässe", "Atemwege", "Knochen", "Körperumriss"]
+    assert result["panel_rows"] == 5
     assert result["actors"] == ["Körperumriss"]
     assert result["axial_slices"] > 40
     assert result["export_enabled_after"] == [True]

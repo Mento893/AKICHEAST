@@ -1,8 +1,9 @@
 """Oberflächen aus Masken für die 3D-Ansicht, in Weltkoordinaten (mm).
 
 Die Maske wird auf ihren Bereich zugeschnitten, leicht geglättet und an der
-Grenze 0.5 als Oberfläche berechnet. Grosse Strukturen werden innerhalb der
-Schicht auf halbe Auflösung gemittelt, damit die Ansicht flüssig dreht.
+Grenze 0.5 als Oberfläche berechnet. Grosse, kompakte Strukturen werden innerhalb
+der Schicht auf halbe Auflösung gemittelt, damit die Ansicht flüssig dreht.
+Feine, verzweigte Strukturen wie Gefässe behalten die volle Auflösung.
 Die Daten selbst werden dabei nicht verändert.
 """
 
@@ -20,6 +21,9 @@ LARGE_VOXELS = 8_000_000
 """Ab dieser Anzahl Voxel im zugeschnittenen Bereich wird die Auflösung halbiert."""
 FINE_PIXEL_MM = 0.8
 """Halbiert wird nur, wenn die Pixel feiner als dieser Wert sind."""
+SPARSE_FRACTION = 0.01
+"""Füllt eine Struktur weniger als 1 % ihres Bereichs, ist sie fein verzweigt
+(zum Beispiel Gefässe) und behält die volle Auflösung."""
 MARGIN = 2
 
 
@@ -31,7 +35,8 @@ def mask_to_surface(mask: np.ndarray, volume: Volume) -> pv.PolyData:
     data = mask[box].astype(np.float32)
     spacing = np.array(volume.spacing)  # (x, y, z)
     factor = 1
-    if data.size > LARGE_VOXELS and spacing[:2].min() < FINE_PIXEL_MM:
+    sparse = data.mean() < SPARSE_FRACTION
+    if data.size > LARGE_VOXELS and spacing[:2].min() < FINE_PIXEL_MM and not sparse:
         factor = 2
         data = _halve_in_plane(data)
     effective = spacing * (factor, factor, 1)

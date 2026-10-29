@@ -6,7 +6,8 @@ wahren Masken. Koordinaten in mm, Mitte des Volumens bei (0, 0, 0),
 
 Aufbau:
 - Körper: elliptischer Zylinder, Weichteil 40 HU
-- zwei Lungen: Ellipsoide mit -850 HU
+- zwei Lungen: Ellipsoide mit -850 HU, unten von der Zwerchfellkuppe eingedrückt
+- in jeder Lunge ein Gefässbaum aus drei Ästen (Weichteil 40 HU)
 - Luftröhre ab z = 30 mm nach oben, zwei Hauptbronchien bis in die Lungen, -1000 HU
 - Wirbelsäule und Rippen mit 700 HU
 - Untersuchungstisch unter dem Körper (500 HU), darf nicht als Knochen gelten
@@ -44,6 +45,16 @@ RIB_AXES = (78.0, 58.0)
 RIB_THICKNESS = 5.0
 RIB_CENTERS_Z = (-50.0, -25.0, 0.0, 25.0, 50.0)
 RIB_HEIGHT = 8.0
+LUNG_BASE_Z = -45.0
+"""Die Lungen sind unten flach abgeschnitten, wie ein breiter Lungenboden."""
+DOME_CENTERS = ((-40.0, 0.0, -60.0), (40.0, 0.0, -60.0))
+DOME_AXES = (14.0, 24.0, 25.0)
+VESSEL_RADIUS = 2.5
+VESSEL_BRANCHES = (  # für die linke Lunge (+x), rechts gespiegelt
+    ((25.0, 5.0, -10.0), (50.0, 5.0, -40.0)),
+    ((25.0, 5.0, -10.0), (50.0, 5.0, 20.0)),
+    ((25.0, 5.0, -10.0), (55.0, 15.0, -10.0)),
+)
 STOMACH = ((30.0, 10.0, -72.0), 6.0)
 CALCIFICATION = (0.0, -40.0, -40.0)
 
@@ -52,6 +63,8 @@ CALCIFICATION = (0.0, -40.0, -40.0)
 class ThoraxPhantom:
     volume: Volume
     lung: np.ndarray
+    vessels: np.ndarray
+    dome: np.ndarray
     airways: np.ndarray
     bone: np.ndarray
     body: np.ndarray
@@ -73,6 +86,19 @@ def thorax_phantom(seed: int = 0) -> ThoraxPhantom:
     for cx, cy, cz in LUNG_CENTERS:
         a, b, c = LUNG_AXES
         lungs |= ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 + ((z - cz) / c) ** 2 <= 1
+    lungs &= z >= LUNG_BASE_Z
+    dome = np.zeros_like(body)
+    for cx, cy, cz in DOME_CENTERS:
+        a, b, c = DOME_AXES
+        dome |= ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 + ((z - cz) / c) ** 2 <= 1
+    lungs &= ~dome
+
+    vessels = np.zeros_like(body)
+    for sign in (-1.0, 1.0):
+        for start, end in VESSEL_BRANCHES:
+            mirror = np.array([sign, 1.0, 1.0])
+            vessels |= _cylinder(x, y, z, np.array(start) * mirror, np.array(end) * mirror, VESSEL_RADIUS)
+    vessels &= lungs
 
     (tx, ty), radius, bottom = TRACHEA
     airways = ((x - tx) ** 2 + (y - ty) ** 2 <= radius**2) & (z >= bottom)
@@ -102,6 +128,7 @@ def thorax_phantom(seed: int = 0) -> ThoraxPhantom:
     hu[body] = SOFT_TISSUE_HU
     hu[table] = TABLE_HU
     hu[lungs] = LUNG_HU
+    hu[vessels] = SOFT_TISSUE_HU
     hu[airways] = AIR_HU
     hu[bone] = BONE_HU
     hu[stomach] = AIR_HU
@@ -112,6 +139,8 @@ def thorax_phantom(seed: int = 0) -> ThoraxPhantom:
     return ThoraxPhantom(
         volume=volume,
         lung=lungs & ~airways,
+        vessels=vessels & ~airways,
+        dome=dome & body,
         airways=airways,
         bone=bone,
         body=body,

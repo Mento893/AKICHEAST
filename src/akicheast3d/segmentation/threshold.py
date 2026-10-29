@@ -1,4 +1,4 @@
-"""Schwellenwert-Segmentierer: trennt Körperumriss, Lunge, Atemwege und Knochen über Dichtewerte.
+"""Schwellenwert-Segmentierer: trennt Körperumriss, Lunge, Lungengefässe, Atemwege und Knochen.
 
 Ablauf:
 1. Körper: alles über -500 HU, grösstes zusammenhängendes Gebiet, Löcher pro Schicht gefüllt.
@@ -7,10 +7,15 @@ Ablauf:
 3. Atemwege: Startpunkt in der Luftröhre zuoberst im Bild. Von dort wachsen sie
    über sehr dunkle Voxel. Die Schwelle wird schrittweise gelockert, solange das
    Gebiet nicht sprunghaft in die Lunge "ausläuft".
-4. Lunge: Luft im Körper ohne Atemwege, Gefässe im Inneren aufgefüllt.
-5. Knochen: über 200 HU im Körper, kleine Splitter entfernt.
+4. Lunge: Luft im Körper ohne Atemwege. Kleine Löcher (Gefässe) werden aufgefüllt,
+   grosse nicht, sonst würde die Kuppe des Zwerchfells zur Lunge gezählt.
+5. Lungengefässe: dichtes Gewebe im Inneren der Lunge, ohne den Lungenrand und
+   ohne die Wände der Atemwege. Arterien und Venen sind nicht getrennt.
+6. Knochen: über 200 HU im Körper, kleine Splitter entfernt.
 
-Grenze: Gefässe mit Kontrastmittel können über 200 HU liegen und erscheinen dann als Knochen.
+Grenzen: Gefässe mit Kontrastmittel können über 200 HU liegen und erscheinen dann
+als Knochen. Die grossen Gefässe am Lungenhilus haben ohne Kontrastmittel dieselbe
+Dichte wie das Gewebe ringsum und fehlen deshalb.
 """
 
 from __future__ import annotations
@@ -26,6 +31,14 @@ BODY_MIN_HU = -500
 AIR_MAX_HU = -400
 LUNG_MIN_FRACTION = 0.2
 """Ein Luftgebiet zählt zur Lunge, wenn es mindestens 20 % des grössten Gebiets hat."""
+LUNG_HOLE_MAX_MM2 = 500.0
+"""Grössere Löcher in einer Schicht der Lunge sind kein Gefäss, sondern zum Beispiel die
+Kuppe des Zwerchfells, und werden nicht aufgefüllt."""
+
+VESSEL_MIN_HU = -500
+VESSEL_MARGIN_MM = 1.5
+"""So viel vom Lungenrand wird weggelassen, damit das Rippenfell nicht als Gefäss erscheint."""
+VESSEL_MIN_ML = 0.1
 
 AIRWAY_THRESHOLDS_HU = (-990, -970, -950, -930, -910)
 AIRWAY_MAX_ML = 300.0
@@ -45,13 +58,15 @@ BONE_MIN_HU = 200
 BONE_MIN_ML = 0.5
 
 LUNG = "Lunge"
+VESSELS = "Lungengefässe"
 AIRWAYS = "Atemwege"
 BONE = "Knochen"
 BODY = "Körperumriss"
 
 COLORS = {
-    LUNG: ((0.55, 0.75, 0.95), 0.6),
-    AIRWAYS: ((0.35, 0.85, 0.55), 1.0),
+    LUNG: ((0.55, 0.75, 0.95), 0.3),
+    VESSELS: ((0.80, 0.22, 0.22), 1.0),
+    AIRWAYS: ((0.95, 0.85, 0.55), 1.0),
     BONE: ((0.93, 0.90, 0.80), 1.0),
     BODY: ((0.95, 0.75, 0.65), 0.2),
 }
@@ -76,13 +91,20 @@ class ThresholdSegmenter(Segmenter):
         report(0.5)
 
         airways = _airways(hu, body, volume, voxel_ml)
+        report(0.65)
+
+        dx, dy, _ = volume.spacing
+        max_hole = LUNG_HOLE_MAX_MM2 / (dx * dy)
+        lung = _fill_slices(lung_air & ~airways, max_hole) & ~airways
         report(0.75)
 
-        lung = _fill_slices(lung_air & ~airways) & ~airways
+        vessels = _vessels(hu, lung, airways, volume, voxel_ml)
+        report(0.9)
+
         bone = _remove_small(body & (hu > BONE_MIN_HU), BONE_MIN_ML / voxel_ml)
         report(1.0)
 
-        masks = {LUNG: lung, AIRWAYS: airways, BONE: bone, BODY: body}
+        masks = {LUNG: lung, VESSELS: vessels, AIRWAYS: airways, BONE: bone, BODY: body}
         return [
             Structure(name, mask, color=COLORS[name][0], opacity=COLORS[name][1])
             for name, mask in masks.items()
@@ -108,8 +130,8 @@ def _remove_small(mask: np.ndarray, min_voxels: float) -> np.ndarray:
     return (sizes >= min_voxels)[labels]
 
 
-def _fill_slices(mask: np.ndarray) -> np.ndarray:
-    """Füllt Löcher in jeder axialen Schicht.
+def _fill_slices(mask: np.ndarray, max_hole: float | None = None) -> np.ndarray:
+    """Füllt Löcher in jeder axialen Schicht, auf Wunsch nur bis `max_hole` Pixel gross.
 
     Der Hintergrund wird Schicht für Schicht beschriftet (keine Verbindung entlang z).
     Was den Bildrand nicht berührt, ist ein Loch.
@@ -117,11 +139,30 @@ def _fill_slices(mask: np.ndarray) -> np.ndarray:
     structure = np.zeros((3, 3, 3), dtype=bool)
     structure[1] = ndimage.generate_binary_structure(2, 1)
     labels, count = ndimage.label(~mask, structure)
-    outside = np.zeros(count + 1, dtype=bool)
+    keep_open = np.zeros(count + 1, dtype=bool)
     for edge in (labels[:, 0, :], labels[:, -1, :], labels[:, :, 0], labels[:, :, -1]):
-        outside[np.unique(edge)] = True
-    outside[0] = False
-    return ~outside[labels]
+        keep_open[np.unique(edge)] = True
+    if max_hole is not None:
+        keep_open |= np.bincount(labels.ravel(), minlength=count + 1) > max_hole
+    keep_open[0] = False
+    return ~keep_open[labels]
+
+
+def _vessels(
+    hu: np.ndarray, lung: np.ndarray, airways: np.ndarray, volume: Volume, voxel_ml: float
+) -> np.ndarray:
+    """Dichtes Gewebe im Inneren der Lunge, ohne Lungenrand und ohne Wände der Atemwege."""
+    result = np.zeros_like(lung)
+    if not lung.any():
+        return result
+    box = _bounding_box(lung, margin=1)
+    dx, dy, _ = volume.spacing
+    iterations = max(1, int(round(VESSEL_MARGIN_MM / min(dx, dy))))
+    inner = ndimage.binary_erosion(lung[box], iterations=iterations)
+    near_airways = ndimage.binary_dilation(airways[box], iterations=iterations)
+    candidates = inner & (hu[box] > VESSEL_MIN_HU) & ~near_airways
+    result[box] = _remove_small(candidates, VESSEL_MIN_ML / voxel_ml)
+    return result
 
 
 def _airways(hu: np.ndarray, body: np.ndarray, volume: Volume, voxel_ml: float) -> np.ndarray:
