@@ -1,0 +1,20 @@
+# Testdaten und Bilddaten nie ins Git (Datenschutz)
+testdata/
+*.dcm
+DICOMDIR
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Build
+build/
+dist/
+
+# Editor und System
+.vscode/
+.idea/
+Thumbs.db
